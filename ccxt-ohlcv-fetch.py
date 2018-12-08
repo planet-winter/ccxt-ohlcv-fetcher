@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+
 __author__ = 'Daniel Winter'
 
 import ccxt
@@ -29,20 +30,22 @@ class Candle(Base):
 
 
      def __repr__(self):
-        return "<Candle(timestamp='%s', open='%s', high='%s', low='%s', volume='%s')>" % (
+        return "<Candle(timestamp='%s', open='%s', high='%s', low='%s', close='%s', volume='%s')>" % (
                              self.timestamp, self.open, self.high, self.low, self.close, self.volume)
 
 
 def perist_ohlcv_batch(ohlcv_batch):
-    candles = []
     for ohlcv in ohlcv_batch:
-        Candle(timestamp=to_bt_date(ohlcv[0]),
+        candle = Candle(
+               timestamp=int(ohlcv[0]),
                open=ohlcv[1],
                high=ohlcv[2],
                low=ohlcv[3],
                close=ohlcv[4],
                volume=ohlcv[5])
-
+        session.add(candle)
+        session.commit()
+        print(candle)
 
 def to_bt_date(timestamp):
     return time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(timestamp))
@@ -55,13 +58,14 @@ def get_ohlcv(exchange, symbol, timeframe, since):
             try:
                 ohlcv_batch = exchange.fetch_ohlcv(symbol, timeframe, since)
                 time.sleep (exchange.rateLimit / 1000) # time.sleep wants seconds
-                if len(ohlcv_batch):
-                    since = ohlcv_batch[len(ohlcv_batch) - 1][0]
-                    perist_ohlcv_batch(ohlcv_batch)
-                else:
-                    break
             except:
                 time.sleep(5*60)
+
+            if len(ohlcv_batch):
+                since = ohlcv_batch[len(ohlcv_batch) - 1][0]
+                perist_ohlcv_batch(ohlcv_batch[1:])
+            else:
+                break
     else:
         print('-'*36,' ERROR ','-'*35)
         print('Exchange "{}" has no method fetchOHLCV.'.format(args.exchange))
@@ -153,13 +157,12 @@ if args.symbol not in exchange.symbols:
 
 db_name = gen_db_name(args.exchange, args.symbol, args.timeframe)
 db_connection = 'sqlite:///' + db_name
-
 engine = create_engine(db_connection)
-
 Base.metadata.create_all(engine)
-
 Session = sessionmaker()
 Session.configure(bind=engine)
+
+session = Session()
 
 get_ohlcv(exchange, args.symbol, args.timeframe, args.since)
 
