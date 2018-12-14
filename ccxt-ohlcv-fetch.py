@@ -38,7 +38,7 @@ class Candle(Base):
 
 
    
-def perist_ohlcv_batch(session, ohlcv_batch):
+def perist_ohlcv_batch(session, ohlcv_batch, debug=False):
      for ohlcv in ohlcv_batch:
           candle = Candle(
                timestamp=int(ohlcv[0]),
@@ -49,7 +49,8 @@ def perist_ohlcv_batch(session, ohlcv_batch):
                volume=ohlcv[5])
           session.add(candle)
           session.commit()
-          print(candle)
+          if debug:
+               print(candle)
 
 
           
@@ -61,7 +62,7 @@ def get_last_candle_timestamp(session):
           return None
 
 
-def get_ohlcv(exchange, symbol, timeframe, since, session):
+def get_ohlcv(exchange, symbol, timeframe, since, session, debug=False):
      if exchange.has['fetchOHLCV']:
           while since < exchange.milliseconds():
                try:
@@ -72,7 +73,7 @@ def get_ohlcv(exchange, symbol, timeframe, since, session):
                     
                if len(ohlcv_batch):
                     since = ohlcv_batch[len(ohlcv_batch) - 1][0]
-                    perist_ohlcv_batch(session, ohlcv_batch[1:])
+                    perist_ohlcv_batch(session, ohlcv_batch[1:], debug=debug)
                else:
                     break
      else:
@@ -114,8 +115,8 @@ def parse_args():
 			help='The iso 8601 starting fetch date. Eg. 2018-01-01T00:00:00Z')
 
     parser.add_argument('--debug',
-                            action ='store_true',
-                            help=('Print Sizer Debugs'))
+                        action ='store_true',
+                        help=('Print Sizer Debugs'))
 
     return parser.parse_args()
 
@@ -183,6 +184,9 @@ def main():
                print('Please specify a --since value.')
                print('-'*80)
                quit()
+          else:
+               if args.debug:
+                    print('resuming from last db entry {}'.format(since))
      else:
           since = exchange.parse8601(args.since)
           if since == None:
@@ -190,7 +194,8 @@ def main():
                print('Could not parse --since')
                print('-'*80)
                quit()
-     get_ohlcv(exchange, args.symbol, args.timeframe, since, session)
+               
+     get_ohlcv(exchange, args.symbol, args.timeframe, since, session, debug=args.debug)
   
 
      
