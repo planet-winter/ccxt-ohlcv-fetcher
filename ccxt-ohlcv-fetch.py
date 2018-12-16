@@ -14,7 +14,7 @@ from sqlalchemy import Column, Integer, String
 from sqlalchemy import desc
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.declarative import declarative_base
-
+from sqlalchemy.exc import IntegrityError
 
 SINCE_DEFAULT = "2018-00-00"
 
@@ -47,8 +47,11 @@ def perist_ohlcv_batch(session, ohlcv_batch, debug=False):
                low=ohlcv[3],
                close=ohlcv[4],
                volume=ohlcv[5])
-          session.add(candle)
-          session.commit()
+          try:
+               session.add(candle)
+               session.commit()
+          except IntegrityError:
+               pass
           if debug:
                print(candle)
 
