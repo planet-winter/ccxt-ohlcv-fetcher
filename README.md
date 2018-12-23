@@ -12,7 +12,7 @@ install virtualenv and python with your OS method
 git clone https://github.com/planet-winter/ccxt-ohlcv-fetcher
 cd ccxt-ohlcv-fetcher
 
-virtualenv --python=python3.4 virtualenv
+virtualenv --python=python3.7 virtualenv
 source virtualenv/bin/activate
 
 pip install -r requirements.txt
