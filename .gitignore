@@ -1,0 +1,7 @@
+*.sqlite
+*.sql
+*.csv
+*.pyc
+virtualenv/
+
+
