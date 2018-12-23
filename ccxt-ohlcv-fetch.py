@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 import time
 import math
 import argparse
+import sqlite3
 from sqlalchemy import create_engine
 from sqlalchemy import Column, Integer, String
 from sqlalchemy import desc
@@ -16,7 +17,8 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.exc import IntegrityError
 
-SINCE_DEFAULT = "2018-00-00"
+
+SINCE_DEFAULT = "2017-00-00"
 
 
 Base = declarative_base()
@@ -48,15 +50,18 @@ def perist_ohlcv_batch(session, ohlcv_batch, debug=False):
                close=ohlcv[4],
                volume=ohlcv[5])
           try:
-               session.add(candle)
-               session.commit()
-          except IntegrityError:
-               pass
-          if debug:
-               print(candle)
+              session.add(candle)
+              if debug:
+                  print(candle)
+          except ReferenceError:
+              continue
+          try:
+              session.commit()	
+          except:
+              continue
 
+  
 
-          
 def get_last_candle_timestamp(session):
      last_timestamp = session.query(Candle).order_by(desc(Candle.timestamp)).limit(1).all()
      if last_timestamp != []:
@@ -77,8 +82,6 @@ def get_ohlcv(exchange, symbol, timeframe, since, session, debug=False):
                if len(ohlcv_batch):
                     since = ohlcv_batch[len(ohlcv_batch) - 1][0]
                     perist_ohlcv_batch(session, ohlcv_batch[1:], debug=debug)
-               else:
-                    break
      else:
           print('-'*36,' ERROR ','-'*35)
           print('Exchange "{}" has no method fetchOHLCV.'.format(args.exchange))
