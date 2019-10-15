@@ -9,6 +9,9 @@ from datetime import datetime, timedelta
 import time
 import math
 import argparse
+import signal
+import sys
+import os
 from sqlalchemy import create_engine
 from sqlalchemy import Column, Integer, String
 from sqlalchemy import desc
@@ -16,7 +19,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.exc import IntegrityError
 
-SINCE_DEFAULT = "2018-00-00"
+SINCE_DEFAULT = "2017-00-00"
 
 
 Base = declarative_base()
@@ -37,8 +40,8 @@ class Candle(Base):
                              self.timestamp, self.open, self.high, self.low, self.close, self.volume)
 
 
-   
-def perist_ohlcv_batch(session, ohlcv_batch, debug=False):
+
+def perist_ohlcv_batch(session, ohlcv_batch, exchange, debug=False):
      for ohlcv in ohlcv_batch:
           candle = Candle(
                timestamp=int(ohlcv[0]),
@@ -53,10 +56,10 @@ def perist_ohlcv_batch(session, ohlcv_batch, debug=False):
           except IntegrityError:
                pass
           if debug:
-               print(candle)
+               print(exchange.iso8601(candle.timestamp), candle)
 
 
-          
+
 def get_last_candle_timestamp(session):
      last_timestamp = session.query(Candle).order_by(desc(Candle.timestamp)).limit(1).all()
      if last_timestamp != []:
@@ -73,10 +76,9 @@ def get_ohlcv(exchange, symbol, timeframe, since, session, debug=False):
                     time.sleep (exchange.rateLimit / 1000) # time.sleep wants seconds
                except:
                     time.sleep(5*60)
-                    
+
                if len(ohlcv_batch):
-                    since = ohlcv_batch[len(ohlcv_batch) - 1][0]
-                    perist_ohlcv_batch(session, ohlcv_batch[1:], debug=debug)
+                    return ohlcv_batch[1:]
                else:
                     break
      else:
@@ -84,14 +86,14 @@ def get_ohlcv(exchange, symbol, timeframe, since, session, debug=False):
           print('Exchange "{}" has no method fetchOHLCV.'.format(args.exchange))
           print('-'*80)
           quit()
-        
 
-	
+
+
 def gen_db_name(exchange, symbol, timeframe):
     symbol_out = symbol.replace("/","")
-    filename = '{}_{}_{}.sqlite'.format(exchange, symbol_out, timeframe)
-    return filename
-
+    file_name = '{}_{}_{}.sqlite'.format(exchange, symbol_out, timeframe)
+    full_path = os.path.join('ccxt', exchange, symbol_out, timeframe, file_name)
+    return full_path
 
 
 def parse_args():
@@ -121,86 +123,118 @@ def parse_args():
                         action ='store_true',
                         help=('Print Sizer Debugs'))
 
+    parser.add_argument('-r','--rate-limit',
+                        type=int,
+                        help='eg. 20 to increase the default exchange rate limit by 20 percent')
+
+
     return parser.parse_args()
 
 
-
-
 def main():
+    # Get our arguments
+    args = parse_args()
 
-     # Get our arguments
-     args = parse_args()
-     
-     # Get our Exchange
-     try:
-          exchange = getattr(ccxt, args.exchange)({
-               'enableRateLimit': True, 
-          })
-     except AttributeError:
-          print('-'*36,' ERROR ','-'*35)
-          print('Exchange "{}" not found. Please check the exchange is supported.'.format(args.exchange))
-          print('-'*80)
-          quit()
+    # Get our Exchange
+    try:
+        exchange = getattr(ccxt, args.exchange)({
+           'enableRateLimit': True,
+        })
+        if args.rate_limit:
+            if exchange.has["rateLimit"]:
+                rl = exchange.rateLimit
+                rl *= int(1 + args.rate_limit/100)
+                exchange["rateLimit"] = rl
+            else:
+                print('-'*36,' WARNING ','-'*35)
+                print('Exchange "{}" has no own rateLimit deffined can not increase it. Ignoring -r paramter.'.format(args.exchange))
+                print('-'*80)
+    except AttributeError:
+        print('-'*36,' ERROR ','-'*35)
+        print('Exchange "{}" not found. Please check the exchange is supported.'.format(args.exchange))
+        print('-'*80)
+        quit()
 
-     # Check if fetching of OHLC Data is supported
-     if exchange.has["fetchOHLCV"] == False:
-          print('-'*36,' ERROR ','-'*35)
-          print('{} does not support fetching OHLC data. Please use another exchange'.format(args.exchange))
-          print('-'*80)
-          quit()
+    # Check if fetching of OHLC Data is supported
+    if exchange.has["fetchOHLCV"] == False:
+        print('-'*36,' ERROR ','-'*35)
+        print('{} does not support fetching OHLCV data. Please use another exchange'.format(args.exchange))
+        print('-'*80)
+        quit()
 
-     # Check requested timeframe is available. If not return a helpful error.
-     if args.timeframe not in exchange.timeframes:
-          print('-'*36,' ERROR ','-'*35)
-          print('The requested timeframe ({}) is not available from {}\n'.format(args.timeframe,args.exchange))
-          print('Available timeframes are:')
-          for key in exchange.timeframes.keys():
-               print('  - ' + key)
-          print('-'*80)
-          quit()
+    if exchange.has['fetchOHLCV'] == 'emulated':
+        print('-'*36,' ERROR ','-'*35)
+        print('{} uses emulated OHLCV. This script does not support this]'.format(args.exchange))
+        print('-'*80)
+        quit()
 
-     # Check if the symbol is available on the Exchange
-     exchange.load_markets()
-     if args.symbol not in exchange.symbols:
-          print('-'*36,' ERROR ','-'*35)
-          print('The requested symbol ({}) is not available from {}\n'.format(args.symbol,args.exchange))
-          print('Available symbols are:')
-          for key in exchange.symbols:
-               print('  - ' + key)
-          print('-'*80)
-          quit()
+    # Check requested timeframe is available. If not return a helpful error.
+    if args.timeframe not in exchange.timeframes:
+        print('-'*36,' ERROR ','-'*35)
+        print('The requested timeframe ({}) is not available from {}\n'.format(args.timeframe,args.exchange))
+        print('Available timeframes are:')
+        for key in exchange.timeframes.keys():
+          print('  - ' + key)
+        print('-'*80)
+        quit()
+
+    # Check if the symbol is available on the Exchange
+    exchange.load_markets()
+    if args.symbol not in exchange.symbols:
+        print('-'*36,' ERROR ','-'*35)
+        print('The requested symbol ({}) is not available from {}\n'.format(args.symbol,args.exchange))
+        print('Available symbols are:')
+        for key in exchange.symbols:
+          print('  - ' + key)
+        print('-'*80)
+        quit()
 
 
-     db_name = gen_db_name(args.exchange, args.symbol, args.timeframe)
-     db_connection = 'sqlite:///' + db_name
-     engine = create_engine(db_connection)
-     Base.metadata.create_all(engine)
-     Session = sessionmaker()
-     Session.configure(bind=engine)
-     
-     session = Session()
+    db_path = gen_db_name(args.exchange, args.symbol, args.timeframe)
+    os.makedirs(os.path.dirname(db_path), exist_ok=True)
+    db_connection = 'sqlite:///' + db_path
+    engine = create_engine(db_connection)
+    Base.metadata.create_all(engine)
+    Session = sessionmaker()
+    Session.configure(bind=engine)
 
-     if not args.since:
-          since = get_last_candle_timestamp(session)
-          if since == None:
-               print('-'*36,' ERROR ','-'*35)
-               print('Please specify a --since value.')
-               print('-'*80)
-               quit()
-          else:
-               if args.debug:
-                    print('resuming from last db entry {}'.format(since))
-     else:
-          since = exchange.parse8601(args.since)
-          if since == None:
-               print('-'*36,' ERROR ','-'*35)
-               print('Could not parse --since')
-               print('-'*80)
-               quit()
-               
-     get_ohlcv(exchange, args.symbol, args.timeframe, since, session, debug=args.debug)
-  
+    session = Session()
 
-     
+    since = None
+    if not args.since:
+        since = get_last_candle_timestamp(session)
+        if since == None:
+            print('-'*36,' ERROR ','-'*35)
+            print('Please specify a --since value.')
+            print('-'*80)
+            quit()
+        else:
+            if args.debug:
+                print('-'*36,' INFO ','-'*35)
+                print('resuming from last db entry {}'.format(since))
+                print('-'*80)
+    else:
+        since = exchange.parse8601(args.since)
+        if since == None:
+            print('-'*36,' ERROR ','-'*35)
+            print('Could not parse --since')
+            print('-'*80)
+            quit()
+
+
+    def signal_handler(signal, frame):
+        session.close()
+        print('-'*36,' ERROR ','-'*35)
+        print('Program interrupted')
+        print('-'*80)
+        sys.exit(1)
+
+    signal.signal(signal.SIGINT, signal_handler)
+
+    while since < exchange.milliseconds():
+        ohlcv_batch = get_ohlcv(exchange, args.symbol, args.timeframe, since, session, debug=args.debug)
+        perist_ohlcv_batch(session, ohlcv_batch, exchange, debug=args.debug)
+        since = ohlcv_batch[-1][0]
+
 if __name__ == "__main__":
      main()
