@@ -78,6 +78,7 @@ def get_last_candle_timestamp(session):
 
 
 def get_ohlcv(exchange, symbol, timeframe, since, session, debug=False):
+    retries = 0
     while since < exchange.milliseconds():
         ohlcv_batch = []
         try:
