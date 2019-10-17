@@ -23,7 +23,7 @@ from sqlalchemy.exc import IntegrityError
 DEFAULT_SINCE = "2014-01-01T00:00:00Z"
 DEFAULT_SLEEP_SECONDS = 5*60
 DEFAULT_RETRIES = 5
-
+DEFAULT_MIN_BATCH_LEN = 24 * 60
 EXTRA_RATE_LIMIT = 0
 exchange_has_ohlcv = False
 retries = 0
@@ -58,7 +58,6 @@ def perist_ohlcv_batch(session, ohlcv_batch, exchange, debug=False):
             volume=ohlcv[5])
         try:
             session.add(candle)
-            session.commit()
         except IntegrityError:
             try:
                 session.rollback()
@@ -66,6 +65,8 @@ def perist_ohlcv_batch(session, ohlcv_batch, exchange, debug=False):
                 quit()
         if debug:
             print(exchange.iso8601(candle.timestamp), candle)
+    session.commit()
+
 
 
 def get_last_candle_timestamp(session):
@@ -134,13 +135,16 @@ def parse_args():
                         help='The iso 8601 starting fetch date. Eg. 2018-01-01T00:00:00Z')
 
     parser.add_argument('--debug',
-                        action ='store_true',
+                        action = 'store_true',
                         help=('Print Sizer Debugs'))
 
     parser.add_argument('-r', '--rate-limit',
                         type=int,
                         help='eg. 20 to increase the default exchange rate limit by 20 percent')
 
+    parser.add_argument('-b', '--min-batch-len',
+                        type=int,
+                        help='minimum number of candles to write in a batch to disk')
 
     return parser.parse_args()
 
@@ -245,10 +249,20 @@ def main():
         print('-'*80)
         quit()
 
+    if args.min_batch_len:
+        min_batch_len = args.min_batch_len
+    else:
+        min_batch_len = DEFAULT_MIN_BATCH_LEN
+
     while since < exchange.milliseconds():
-        ohlcv_batch = get_ohlcv(exchange, args.symbol, args.timeframe, since, session, debug=args.debug)
+        ohlcv_batch = []
+
+        while len(ohlcv_batch) <= min_batch_len:
+            ohlcv_batch += get_ohlcv(exchange, args.symbol, args.timeframe, since, session, debug=args.debug)
+            since = ohlcv_batch[-1][0]
+
         perist_ohlcv_batch(session, ohlcv_batch, exchange, debug=args.debug)
-        since = ohlcv_batch[-1][0]
+
 
 if __name__ == "__main__":
      main()
