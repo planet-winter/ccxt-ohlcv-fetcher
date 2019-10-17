@@ -63,8 +63,8 @@ def perist_ohlcv_batch(session, ohlcv_batch, exchange, debug=False):
                 session.rollback()
             except:
                 quit()
-        if debug:
-            print(exchange.iso8601(candle.timestamp), candle)
+        #if debug:
+        #    print(exchange.iso8601(candle.timestamp), candle)
     session.commit()
 
 
@@ -79,14 +79,17 @@ def get_last_candle_timestamp(session):
 
 def get_ohlcv(exchange, symbol, timeframe, since, session, debug=False):
     while since < exchange.milliseconds():
-        ohlcv_batch = None
+        ohlcv_batch = []
         try:
             time.sleep(EXTRA_RATE_LIMIT)
             ohlcv_batch = exchange.fetch_ohlcv(symbol, timeframe, since)
         except:
             time.sleep(DEFAULT_SLEEP_SECONDS)
-        if len(ohlcv_batch):
 
+        if len(ohlcv_batch):
+            if debug:
+                for candle in ohlcv_batch:
+                    print(exchange.iso8601(candle[0]), candle)
             return ohlcv_batch[1:]
         else:
             print('-'*36, ' WARNING ', '-'*35)
