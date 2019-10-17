@@ -19,8 +19,13 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.exc import IntegrityError
 
-SINCE_DEFAULT = "2017-00-00"
+DEFAULT_SINCE = "2017-00-00"
+DEFAULT_SLEEP_SECONDS = 5*60
+DEFAULT_RETRIES = 5
 
+EXTRA_RATE_LIMIT = 0
+exchange_has_ohlcv = False
+retries = 0
 
 Base = declarative_base()
 
@@ -59,34 +64,38 @@ def perist_ohlcv_batch(session, ohlcv_batch, exchange, debug=False):
                print(exchange.iso8601(candle.timestamp), candle)
 
 
-
 def get_last_candle_timestamp(session):
-     last_timestamp = session.query(Candle).order_by(desc(Candle.timestamp)).limit(1).all()
-     if last_timestamp != []:
-          return int(last_timestamp[0].timestamp)
-     else:
-          return None
+    last_timestamp = session.query(Candle).order_by(desc(Candle.timestamp)).limit(1).all()
+    if last_timestamp != []:
+        return int(last_timestamp[0].timestamp)
+    else:
+        return None
 
 
 def get_ohlcv(exchange, symbol, timeframe, since, session, debug=False):
-     if exchange.has['fetchOHLCV']:
-          while since < exchange.milliseconds():
-               try:
-                    ohlcv_batch = exchange.fetch_ohlcv(symbol, timeframe, since)
-                    time.sleep (exchange.rateLimit / 1000) # time.sleep wants seconds
-               except:
-                    time.sleep(5*60)
-
-               if len(ohlcv_batch):
-                    return ohlcv_batch[1:]
-               else:
-                    break
-     else:
-          print('-'*36,' ERROR ','-'*35)
-          print('Exchange "{}" has no method fetchOHLCV.'.format(args.exchange))
-          print('-'*80)
-          quit()
-
+    while since < exchange.milliseconds():
+        ohlcv_batch = None
+        try:
+            time.sleep (EXTRA_RATE_LIMIT)
+            ohlcv_batch = exchange.fetch_ohlcv(symbol, timeframe, since)
+        except:
+            time.sleep(DEFAULT_SLEEP_SECONDS)
+            if len(ohlcv_batch):
+                return ohlcv_batch[1:]
+            else:
+                # Timeout?
+                print('-'*36,' WARNING ','-'*35)
+                print('Could not fetch ohlcv batch. timeout, rate limit or exchange error. Re-trying ')
+                print('-'*80)
+                time.sleep(DEFAULT_SLEEP_SECONDS)
+                retries+=1
+                if retries <= DEFAULT_RETRIES:
+                    get_ohlcv(exchange, symbol, timeframe, since, session, debug=debug)
+                else:
+                    print('-'*36,' ERROR ','-'*35)
+                    print('Could not fetch ohlcv batch after {} retries'.format(DEFAULT_RETRIES))
+                    print('-'*80)
+                    quit()
 
 
 def gen_db_name(exchange, symbol, timeframe):
@@ -132,6 +141,13 @@ def parse_args():
 
 
 def main():
+    def signal_handler(signal, frame):
+        session.close()
+        print('-'*36,' ERROR ','-'*35)
+        print('Program interrupted')
+        print('-'*80)
+        sys.exit(1)
+
     # Get our arguments
     args = parse_args()
 
@@ -140,20 +156,14 @@ def main():
         exchange = getattr(ccxt, args.exchange)({
            'enableRateLimit': True,
         })
-        if args.rate_limit:
-            if exchange.has["rateLimit"]:
-                rl = exchange.rateLimit
-                rl *= int(1 + args.rate_limit/100)
-                exchange["rateLimit"] = rl
-            else:
-                print('-'*36,' WARNING ','-'*35)
-                print('Exchange "{}" has no own rateLimit deffined can not increase it. Ignoring -r paramter.'.format(args.exchange))
-                print('-'*80)
     except AttributeError:
         print('-'*36,' ERROR ','-'*35)
         print('Exchange "{}" not found. Please check the exchange is supported.'.format(args.exchange))
         print('-'*80)
         quit()
+
+    if args.rate_limit:
+        EXTRA_RATE_LIMIT = int(exchange.rateLimit * (1 + args.rate_limit/100))
 
     # Check if fetching of OHLC Data is supported
     if exchange.has["fetchOHLCV"] == False:
@@ -221,15 +231,13 @@ def main():
             print('-'*80)
             quit()
 
-
-    def signal_handler(signal, frame):
-        session.close()
-        print('-'*36,' ERROR ','-'*35)
-        print('Program interrupted')
-        print('-'*80)
-        sys.exit(1)
-
     signal.signal(signal.SIGINT, signal_handler)
+
+    if not exchange.has['fetchOHLCV']:
+        print('-'*36,' ERROR ','-'*35)
+        print('Exchange "{}" has no method fetchOHLCV.'.format(args.exchange))
+        print('-'*80)
+        quit()
 
     while since < exchange.milliseconds():
         ohlcv_batch = get_ohlcv(exchange, args.symbol, args.timeframe, since, session, debug=args.debug)
