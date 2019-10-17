@@ -1,0 +1,6 @@
+[console_scripts]
+pudb3 = pudb.run:main
+
+[gui_script]
+
+

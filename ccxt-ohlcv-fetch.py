@@ -12,6 +12,7 @@ import argparse
 import signal
 import sys
 import os
+import sqlite3
 from sqlalchemy import create_engine
 from sqlalchemy import Column, Integer, String
 from sqlalchemy import desc
@@ -59,7 +60,10 @@ def perist_ohlcv_batch(session, ohlcv_batch, exchange, debug=False):
                session.add(candle)
                session.commit()
           except IntegrityError:
-               pass
+              try:
+                  session.rollback()
+              except:
+                  quit()
           if debug:
                print(exchange.iso8601(candle.timestamp), candle)
 
@@ -80,22 +84,21 @@ def get_ohlcv(exchange, symbol, timeframe, since, session, debug=False):
             ohlcv_batch = exchange.fetch_ohlcv(symbol, timeframe, since)
         except:
             time.sleep(DEFAULT_SLEEP_SECONDS)
-            if len(ohlcv_batch):
-                return ohlcv_batch[1:]
+        if len(ohlcv_batch):
+            return ohlcv_batch[1:]
+        else:
+            print('-'*36,' WARNING ','-'*35)
+            print('Could not fetch ohlcv batch. timeout, rate limit or exchange error. Re-trying ')
+            print('-'*80)
+            time.sleep(DEFAULT_SLEEP_SECONDS)
+            retries+=1
+            if retries <= DEFAULT_RETRIES:
+                return get_ohlcv(exchange, symbol, timeframe, since, session, debug=debug)
             else:
-                # Timeout?
-                print('-'*36,' WARNING ','-'*35)
-                print('Could not fetch ohlcv batch. timeout, rate limit or exchange error. Re-trying ')
+                print('-'*36,' ERROR ','-'*35)
+                print('Could not fetch ohlcv batch after {} retries'.format(DEFAULT_RETRIES))
                 print('-'*80)
-                time.sleep(DEFAULT_SLEEP_SECONDS)
-                retries+=1
-                if retries <= DEFAULT_RETRIES:
-                    get_ohlcv(exchange, symbol, timeframe, since, session, debug=debug)
-                else:
-                    print('-'*36,' ERROR ','-'*35)
-                    print('Could not fetch ohlcv batch after {} retries'.format(DEFAULT_RETRIES))
-                    print('-'*80)
-                    quit()
+                quit()
 
 
 def gen_db_name(exchange, symbol, timeframe):
@@ -214,8 +217,9 @@ def main():
     if not args.since:
         since = get_last_candle_timestamp(session)
         if since == None:
-            print('-'*36,' ERROR ','-'*35)
-            print('Please specify a --since value.')
+            since = '2014-01-01T00:00:00Z'
+            print('-'*36,' INFO','-'*35)
+            print('Starting with default since vaule of {}.'.format(since))
             print('-'*80)
             quit()
         else:
