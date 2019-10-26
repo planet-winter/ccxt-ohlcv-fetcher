@@ -227,11 +227,10 @@ def main():
     if not args.since:
         since = get_last_candle_timestamp(session)
         if since == None:
-            since = '2014-01-01T00:00:00Z'
             print('-'*36, ' INFO', '-'*35)
-            print('Starting with default since vaule of {}.'.format(since))
-            print('-'*80)
-            quit()
+            print('Starting with default since value of {}.'.format(DEFAULT_SINCE))
+            print('-' * 80)
+            since = exchange.parse8601(DEFAULT_SINCE)
         else:
             if args.debug:
                 print('-'*36, ' INFO ', '-'*35)
