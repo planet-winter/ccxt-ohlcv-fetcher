@@ -258,14 +258,25 @@ def main():
     else:
         min_batch_len = DEFAULT_MIN_BATCH_LEN
 
-    while since < exchange.milliseconds():
+    exchange_milliseconds = exchange.milliseconds()
+    isLive = False
+
+    while since < exchange_milliseconds and not isLive:
         ohlcv_batch = []
 
-        while len(ohlcv_batch) <= min_batch_len:
+        while len(ohlcv_batch) <= min_batch_len and not isLive:
+            millisecondsDifference = exchange_milliseconds - since
+            secondsDifference = millisecondsDifference / 1000 / 60
+            # if the difference is less than 1 second,
+            # it means it is up to date with live data
+            isLive = secondsDifference < 1
+
             ohlcv_batch += get_ohlcv(exchange, args.symbol, args.timeframe, since, session, debug=args.debug)
-            since = ohlcv_batch[-1][0]
+            if (ohlcv_batch): since = ohlcv_batch[-1][0]
 
         perist_ohlcv_batch(session, ohlcv_batch, exchange, debug=args.debug)
+    
+    main()
 
 
 if __name__ == "__main__":
