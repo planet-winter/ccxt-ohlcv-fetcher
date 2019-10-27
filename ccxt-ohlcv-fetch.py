@@ -25,8 +25,11 @@ DEFAULT_SLEEP_SECONDS = 5*60
 DEFAULT_RETRIES = 5
 DEFAULT_MIN_BATCH_LEN = 24 * 60
 EXTRA_RATE_LIMIT = 0
-exchange_has_ohlcv = False
-retries = 0
+TIMEFRAMES = {'1m': 60, '5m': 300, '15m': 900, '30m': 1800, '1h': 3600,
+              '2h': 7200, '3h': 10800, '4h': 14400, '6h': 21600 , '12h': 43200,
+              '1d': 86400, '1M': 2592000, '1y': 31104000}
+              # days, month and years length vary as of calendar
+              # use lower value here to be safe
 
 Base = declarative_base()
 
@@ -68,7 +71,6 @@ def perist_ohlcv_batch(session, ohlcv_batch, exchange, debug=False):
     session.commit()
 
 
-
 def get_last_candle_timestamp(session):
     last_timestamp = session.query(Candle).order_by(desc(Candle.timestamp)).limit(1).all()
     if last_timestamp != []:
@@ -77,34 +79,50 @@ def get_last_candle_timestamp(session):
         return None
 
 
-def get_ohlcv(exchange, symbol, timeframe, since, session, debug=False):
-    retries = 0
-    while since < exchange.milliseconds():
-        ohlcv_batch = []
-        try:
-            time.sleep(EXTRA_RATE_LIMIT)
-            ohlcv_batch = exchange.fetch_ohlcv(symbol, timeframe, since)
-        except:
-            time.sleep(DEFAULT_SLEEP_SECONDS)
+def get_ohlcv_batch(exchange, symbol, timeframe, since, session, debug=False):
+    ohlcv_batch = []
+    try:
+        time.sleep(EXTRA_RATE_LIMIT)
+        ohlcv_batch = exchange.fetch_ohlcv(symbol, timeframe, since)
+    except:
+        # TODO: handle specific exeptions
+        time.sleep(DEFAULT_SLEEP_SECONDS)
+
+    if len(ohlcv_batch):
+        ohlcv_batch = ohlcv_batch[1:]
+        if debug:
+            for candle in ohlcv_batch:
+                print(exchange.iso8601(candle[0]), candle)
+        return ohlcv_batch
+    else:
+        return None
+
+
+def get_candles(exchange, symbol, timeframe, since, session, doquit, debug):
+    exchange_milliseconds = exchange.milliseconds()
+
+    while True:
+        # if the difference is less than 1 minute,
+        # it means it is up to date with live data
+        if timeframes_difference(timeframe, exchange_milliseconds, since) < 1:
+            # update exchange milliseconds as fetching historical
+            # usually uses more than one minute as of rate rateLimit.
+            # saving some api calls
+            exchange_milliseconds = exchange.milliseconds()
+            if timeframes_difference(timeframe, exchange_milliseconds, since) < 1:
+                # we are current
+                if doquit:
+                    quit()
+                else:
+                    time.sleep(TIMEFRAMES[timeframe])
+
+        ohlcv_batch = get_ohlcv_batch(exchange, symbol, timeframe,
+                           since, session, debug)
 
         if len(ohlcv_batch):
-            if debug:
-                for candle in ohlcv_batch:
-                    print(exchange.iso8601(candle[0]), candle)
-            return ohlcv_batch[1:]
-        else:
-            print('-'*36, ' WARNING ', '-'*35)
-            print('Could not fetch ohlcv batch. timeout, rate limit or exchange error. Re-trying ')
-            print('-'*80)
-            time.sleep(DEFAULT_SLEEP_SECONDS)
-            retries+=1
-            if retries <= DEFAULT_RETRIES:
-                return get_ohlcv(exchange, symbol, timeframe, since, session, debug=debug)
-            else:
-                print('-'*36, ' ERROR ',' -'*35)
-                print('Could not fetch ohlcv batch after {} retries'.format(DEFAULT_RETRIES))
-                print('-'*80)
-                quit()
+            # last candles timestamp
+            since = ohlcv_batch[-1][0]
+            perist_ohlcv_batch(session, ohlcv_batch, exchange, debug)
 
 
 def gen_db_name(exchange, symbol, timeframe):
@@ -112,6 +130,13 @@ def gen_db_name(exchange, symbol, timeframe):
     file_name = '{}_{}_{}.sqlite'.format(exchange, symbol_out, timeframe)
     full_path = os.path.join('ccxt', exchange, symbol_out, timeframe, file_name)
     return full_path
+
+
+def timeframes_difference(timeframe, exchange_milliseconds, since):
+    milliseconds_difference = exchange_milliseconds - since
+    minutes_difference = milliseconds_difference / 1000 / 60
+    timeframes_difference = minutes_difference / TIMEFRAMES[timeframe]
+    return timeframes_difference
 
 
 def parse_args():
@@ -146,9 +171,9 @@ def parse_args():
                         type=int,
                         help='eg. 20 to increase the default exchange rate limit by 20 percent')
 
-    parser.add_argument('-b', '--min-batch-len',
-                        type=int,
-                        help='minimum number of candles to write in a batch to disk')
+    parser.add_argument('-q', '--quit',
+                        action = 'store_true',
+                        help='exit program after fetching latest candle')
 
     return parser.parse_args()
 
@@ -200,6 +225,8 @@ def main():
           print('  - ' + key)
         print('-'*80)
         quit()
+    else:
+        timeframe = args.timeframe
 
     # Check if the symbol is available on the Exchange
     exchange.load_markets()
@@ -211,6 +238,8 @@ def main():
           print('  - ' + key)
         print('-'*80)
         quit()
+    else:
+        symbol = args.symbol
 
 
     db_path = gen_db_name(args.exchange, args.symbol, args.timeframe)
@@ -234,7 +263,7 @@ def main():
         else:
             if args.debug:
                 print('-'*36, ' INFO ', '-'*35)
-                print('resuming from last db entry {}'.format(since))
+                print('resuming from last db entry {}'.format(exchange.iso8601(since)))
                 print('-'*80)
     else:
         since = exchange.parse8601(args.since)
@@ -252,19 +281,10 @@ def main():
         print('-'*80)
         quit()
 
-    if args.min_batch_len:
-        min_batch_len = args.min_batch_len
-    else:
-        min_batch_len = DEFAULT_MIN_BATCH_LEN
+    debug = args.debug
+    doquit = args.quit
 
-    while since < exchange.milliseconds():
-        ohlcv_batch = []
-
-        while len(ohlcv_batch) <= min_batch_len:
-            ohlcv_batch += get_ohlcv(exchange, args.symbol, args.timeframe, since, session, debug=args.debug)
-            since = ohlcv_batch[-1][0]
-
-        perist_ohlcv_batch(session, ohlcv_batch, exchange, debug=args.debug)
+    get_candles(exchange, symbol, timeframe, since, session, doquit, debug)
 
 
 if __name__ == "__main__":
