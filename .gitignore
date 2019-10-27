@@ -4,4 +4,4 @@
 *.pyc
 virtualenv/
 venv/
-
+*.#
