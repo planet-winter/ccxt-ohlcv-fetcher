@@ -104,7 +104,7 @@ def get_ohlcv_batch(exchange, symbol, timeframe, since, session, debug=False):
         return None
 
 
-def get_candles(exchange, symbol, timeframe, since, session, doquit, debug):
+def get_candles(exchange, session, symbol, timeframe, since, doquit, debug):
     exchange_milliseconds = exchange.milliseconds()
 
     while True:
@@ -187,59 +187,54 @@ def parse_args():
     return parser.parse_args()
 
 
-def main():
-    def signal_handler(signal, frame):
-        session.close()
-        message('Program interrupted', header='Error')
-        sys.exit(1)
-
-    # Get our arguments
-    args = parse_args()
-
+def check_args(args):
     # Get our Exchange
+
+    params = {}
     try:
-        exchange = getattr(ccxt, args.exchange)({
+        params['exchange'] = getattr(ccxt, args.exchange)({
            'enableRateLimit': True,
         })
     except AttributeError:
-        message('Exchange "{}" not found. Please check the exchange is \
-                supported.'.format(args.exchange), header='Error')
+        message('Exchange "{}" not found. Please check the exchange\
+                is supported.'.format(args.exchange), header='Error')
         quit()
 
     if args.rate_limit:
         EXTRA_RATE_LIMIT = int(exchange.rateLimit * (1 + args.rate_limit/100))
 
     # Check if fetching of OHLC Data is supported
-    if exchange.has["fetchOHLCV"] == False:
-        message('{} does not support fetching OHLCV data. Please use another \
+    if params['exchange'].has["fetchOHLCV"] == False:
+        message('{} does not support fetching OHLCV data. Please use another\
                 exchange'.format(args.exchange), header='Error')
         quit()
 
-    if exchange.has['fetchOHLCV'] == 'emulated':
-        message('{} uses emulated OHLCV. This script does not support \
+    if params['exchange'].has['fetchOHLCV'] == 'emulated':
+        message('{} uses emulated OHLCV. This script does not support\
                 this'.format(args.exchange), header='Error')
         quit()
 
     # Check requested timeframe is available. If not return a helpful error.
-    if args.timeframe not in exchange.timeframes:
-        message('The requested timeframe ({}) is not available from {}\n \
+    if args.timeframe not in params['exchange'].timeframes:
+        message('The requested timeframe ({}) is not available from {}\n\
                 Available timeframes are:\n{}'.format(args.timeframe, \
                 args.exchange, ''.join(['  -' + key + '\n' for key in \
-                exchange.timeframes.keys()])), header='Error')
+                params['exchange'].timeframes.keys()])), header='Error')
         quit()
     else:
-        timeframe = args.timeframe
+        params['timeframe'] = args.timeframe
 
     # Check if the symbol is available on the Exchange
-    exchange.load_markets()
-    if args.symbol not in exchange.symbols:
-        message('The requested symbol ({}) is not available from {}\n \
+    params['exchange'].load_markets()
+    if args.symbol not in params['exchange'].symbols:
+        message('The requested symbol ({}) is not available from {}\n\
                 Available symbols are:\n{}'.format(args.symbol,args.exchange, \
-                ''.join(['  -' + key + '\n' for key in exchange.symbols])), \
+                ''.join(['  -' + key + '\n' \
+                for key in params['exchange'].symbols])), \
                 header='Error')
         quit()
     else:
-        symbol = args.symbol
+        params['symbol'] = args.symbol
 
 
     db_path = gen_db_name(args.exchange, args.symbol, args.timeframe)
@@ -250,38 +245,54 @@ def main():
     Session = sessionmaker()
     Session.configure(bind=engine)
 
-    session = Session()
+    params['sqlsession'] = Session()
 
     since = None
     if not args.since:
-        since = get_last_candle_timestamp(session)
-        if since == None:
-            since = exchange.parse8601(DEFAULT_SINCE)
+        params['since'] = get_last_candle_timestamp(params['sqlsession'])
+        if params['since'] == None:
+            params['since'] = params['exchange'].parse8601(DEFAULT_SINCE)
             message('Starting with default since value of \
                     {}.'.format(DEFAULT_SINCE), header='Info')
 
         else:
             if args.debug:
                 message('resuming from last db entry \
-                        {}'.format(exchange.iso8601(since)), header='Info')
+                        {}'.format(params['exchange'].iso8601(params['since']))\
+                        , header='Info')
     else:
-        since = exchange.parse8601(args.since)
-        if since == None:
+        params['since'] = params['exchange'].parse8601(args.since)
+        if params['since'] == None:
             message('Could not parse --since. Use format 2018-12-24T00:00:00Z',
                     header='Error')
             quit()
 
-    signal.signal(signal.SIGINT, signal_handler)
-
-    if not exchange.has['fetchOHLCV']:
+    if not params['exchange'].has['fetchOHLCV']:
         message('Exchange "{}" has no method fetchOHLCV.'.format(\
                 args.exchange), header='Error')
         quit()
 
-    debug = args.debug
-    doquit = args.quit
+    params['debug'] = args.debug
+    params['doquit'] = args.quit
 
-    get_candles(exchange, symbol, timeframe, since, session, doquit, debug)
+    return params
+
+
+def signal_handler(signal, frame):
+    params.session.close()
+    message('Program interrupted', header='Error')
+    sys.exit(1)
+    quit()
+
+
+def main():
+
+    args = parse_args()
+    params = check_args(args)
+    signal.signal(signal.SIGINT, signal_handler)
+    p = params
+    get_candles(p['exchange'], p['sqlsession'], p['symbol'], p['timeframe'], \
+                p['since'], p['doquit'], p['debug'])
 
 
 if __name__ == "__main__":
