@@ -278,22 +278,20 @@ def check_args(args):
     return params
 
 
-def signal_handler(signal, frame):
-    params.session.close()
-    message('Program interrupted', header='Error')
-    sys.exit(1)
-    quit()
-
-
 def main():
-
     args = parse_args()
     params = check_args(args)
-    signal.signal(signal.SIGINT, signal_handler)
     p = params
     get_candles(p['exchange'], p['sqlsession'], p['symbol'], p['timeframe'], \
                 p['since'], p['doquit'], p['debug'])
 
 
 if __name__ == "__main__":
-     main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        message("Fetcher finished by user", header='ERROR')
+    except Exception as err:
+        message("Fetcher failed with exception\n {}".format(err), \
+                header='ERROR')
+        raise
