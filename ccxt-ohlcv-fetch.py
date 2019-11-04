@@ -251,7 +251,7 @@ def check_args(args):
     since = None
     if not args.since:
         params['since'] = get_last_candle_timestamp(params['sqlsession'])
-        if params['since'] == None:
+        if params['since'] is None:
             params['since'] = params['exchange'].parse8601(DEFAULT_SINCE)
             message('Starting with default since value of \
                     {}.'.format(DEFAULT_SINCE), header='Info')
