@@ -92,7 +92,7 @@ def get_ohlcv_batch(exchange, symbol, timeframe, since, session, debug=False):
         # TODO: handle specific exeptions
         time.sleep(DEFAULT_SLEEP_SECONDS)
 
-    if ohlcv_batch is not None:
+    if ohlcv_batch is not None and len(ohlcv_batch):
         # ohlcv_batch[0] contains candle at time "since"
         # which we already fetched in last call
         ohlcv_batch = ohlcv_batch[1:]
@@ -125,7 +125,7 @@ def get_candles(exchange, session, symbol, timeframe, since, doquit, debug):
         ohlcv_batch = get_ohlcv_batch(exchange, symbol, timeframe,
                            since, session, debug)
 
-        if ohlcv_batch is not None:
+        if ohlcv_batch is not None and len(ohlcv_batch):
             # last candles timestamp
             since = ohlcv_batch[-1][0]
             perist_ohlcv_batch(session, ohlcv_batch, exchange, debug)
