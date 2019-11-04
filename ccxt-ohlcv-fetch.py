@@ -201,7 +201,8 @@ def check_args(args):
         quit()
 
     if args.rate_limit:
-        EXTRA_RATE_LIMIT = int(exchange.rateLimit * (1 + args.rate_limit/100))
+        params['exchange'].rateLimit = int(params['exchange'].rateLimit \
+                                       * (1 + args.rate_limit/100))
 
     # Check if fetching of OHLC Data is supported
     if params['exchange'].has["fetchOHLCV"] == False:
@@ -262,7 +263,7 @@ def check_args(args):
                         , header='Info')
     else:
         params['since'] = params['exchange'].parse8601(args.since)
-        if params['since'] == None:
+        if params['since'] is None:
             message('Could not parse --since. Use format 2018-12-24T00:00:00Z',
                     header='Error')
             quit()
