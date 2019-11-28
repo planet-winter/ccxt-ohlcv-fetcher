@@ -4,15 +4,17 @@
 __author__ = 'Daniel Winter'
 
 import ccxt
-#import ccxt.async_support as ccxt
-from datetime import datetime, timedelta
 import time
 import math
 import argparse
 import signal
 import sys
 import os
+import re
 import sqlite3
+#import ccxt.async_support as ccxt
+from datetime import datetime, timedelta
+from dateutil.relativedelta import relativedelta
 from sqlalchemy import create_engine
 from sqlalchemy import Column, Integer, String, Index
 from sqlalchemy import desc
@@ -20,16 +22,12 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.exc import IntegrityError
 
+
 DEFAULT_SINCE = "2014-01-01T00:00:00Z"
 DEFAULT_SLEEP_SECONDS = 5*60
 DEFAULT_RETRIES = 5
 DEFAULT_MIN_BATCH_LEN = 24 * 60
 EXTRA_RATE_LIMIT = 0
-TIMEFRAMES = {'1m': 60, '5m': 300, '15m': 900, '30m': 1800, '1h': 3600,
-              '2h': 7200, '3h': 10800, '4h': 14400, '6h': 21600 , '12h': 43200,
-              '1d': 86400, '1M': 2592000, '1y': 31104000}
-              # days, month and years length vary as of calendar
-              # use lower value here to be safe
 
 Base = declarative_base()
 
@@ -70,10 +68,11 @@ def perist_ohlcv_batch(session, ohlcv_batch, exchange, debug=False):
                 session.rollback()
             except:
                 quit()
-        #if debug:
-        #    print(exchange.iso8601(candle.timestamp), candle)
-    session.commit()
 
+    session.commit()
+    if debug:
+        for candle in ohlcv_batch:
+            print(exchange.iso8601(candle[0]), candle)
 
 def get_last_candle_timestamp(session):
     last_timestamp = session.query(Candle).order_by(desc(Candle.timestamp)).limit(1).all()
@@ -96,9 +95,6 @@ def get_ohlcv_batch(exchange, symbol, timeframe, since, session, debug=False):
         # ohlcv_batch[0] contains candle at time "since"
         # which we already fetched in last call
         ohlcv_batch = ohlcv_batch[1:]
-        if debug:
-            for candle in ohlcv_batch:
-                print(exchange.iso8601(candle[0]), candle)
         return ohlcv_batch
     else:
         return None
@@ -108,27 +104,26 @@ def get_candles(exchange, session, symbol, timeframe, since, doquit, debug):
     exchange_milliseconds = exchange.milliseconds()
 
     while True:
-        # if the difference is less than 1 minute,
-        # it means it is up to date with live data
-        if timeframes_difference(timeframe, exchange_milliseconds, since) < 1:
-            # update exchange milliseconds as fetching historical
-            # usually uses more than one minute as of rate rateLimit.
-            # saving some api calls
-            exchange_milliseconds = exchange.milliseconds()
-            if timeframes_difference(timeframe, exchange_milliseconds, since) < 1:
-                # we are current
-                if doquit:
-                    quit()
-                else:
-                    time.sleep(TIMEFRAMES[timeframe])
 
         ohlcv_batch = get_ohlcv_batch(exchange, symbol, timeframe,
                            since, session, debug)
 
         if ohlcv_batch is not None and len(ohlcv_batch):
-            # last candles timestamp
-            since = ohlcv_batch[-1][0]
-            perist_ohlcv_batch(session, ohlcv_batch, exchange, debug)
+            last_candle = ohlcv_batch[-1]
+            last_candle_timestamp = since = last_candle[0]
+
+            if last_candle_is_incomplete(last_candle_timestamp, timeframe, exchange):
+                # delete last incomplete candle from list
+                del ohlcv_batch[-1]
+                perist_ohlcv_batch(session, ohlcv_batch, exchange, debug)
+                # data is up to date with current time as well
+                if doquit:
+                    quit()
+                else:
+                    time.sleep(TIMEFRAMES[timeframe])
+            else:
+                perist_ohlcv_batch(session, ohlcv_batch, exchange, debug)
+
 
 
 def gen_db_name(exchange, symbol, timeframe):
@@ -137,12 +132,32 @@ def gen_db_name(exchange, symbol, timeframe):
     full_path = os.path.join('ccxt', exchange, symbol_out, timeframe, file_name)
     return full_path
 
+def last_candle_is_incomplete(candle_timestamp, candle_timeframe, exchange):
+    timeframe_re = re.compile(r'(?P<number>\d+)(?P<unit>[smhdwMy]{1})')
+    match = timeframe_re.match(candle_timeframe)
+    seconds = minutes = hours = days = weeks = months = years = 0
+    lookup_dict = {'s': seconds, 'm': minutes, 'h': hours, 'd': days, 'w': weeks,
+        'M': months, 'y': years}\
 
-def timeframes_difference(timeframe, exchange_milliseconds, since):
-    milliseconds_difference = exchange_milliseconds - since
-    minutes_difference = milliseconds_difference / 1000 / 60
-    timeframes_difference = minutes_difference / TIMEFRAMES[timeframe]
-    return timeframes_difference
+    if match is not None:
+        matchdict = match.groupdict()
+        lookup_dict[matchdict['unit']] = int(matchdict['number'])
+        candle_dt = datetime.fromtimestamp(candle_timestamp / 1000)
+        exchange_dt = datetime.fromtimestamp(exchange.milliseconds() / 1000)
+        # eg. timeframe=1d and candle_timestamp=2019-01-01T00:00:00Z
+        #  exchange_dt=2019-01-02T01:00:00Z
+        #
+        #  2019-01-02T01:00:00Z - 1 day = 2019-01-01T00:00:00Z
+        # use relativetimedelta as included batteries don't offer years
+        #  or months
+        one_candle_delta = relativedelta(years=lookup_dict['y'],
+            months=lookup_dict['M'], weeks=lookup_dict['w'],
+            days=lookup_dict['d'], hours=lookup_dict['h'],
+            minutes=lookup_dict['m'], seconds=lookup_dict['s'])
+        return exchange_dt - one_candle_delta < candle_dt
+
+    else:
+        message("Could not parse timeframe %s" % candle_timeframe, header="Error")
 
 def message(message, header="Error"):
     print(header.center(80, '-'))
