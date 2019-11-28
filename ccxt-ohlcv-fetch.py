@@ -45,34 +45,42 @@ class Candle(Base):
     Index('timestamp_idx', 'timestamp')
 
     def __repr__(self):
-        return "<Candle(timestamp='%s', open='%s', high='%s', low='%s', \
-                        close='%s', volume='%s')>" % (self.timestamp, \
-                        self.open, self.high, self.low, \
-                        self.close, self.volume)
+        return "<Candle(timestamp='%s', open='%s', high='%s', low='%s', "\
+                "close='%s', volume='%s')>" % (self.timestamp,
+                    self.open, self.high, self.low,
+                    self.close, self.volume)
 
 
 
-def perist_ohlcv_batch(session, ohlcv_batch, exchange, debug=False):
+def persist_ohlcv_batch(session, ohlcv_batch, exchange, debug=False):
+    candles = []
     for ohlcv in ohlcv_batch:
-        candle = Candle(
-            timestamp=int(ohlcv[0]),
-            open=ohlcv[1],
-            high=ohlcv[2],
-            low=ohlcv[3],
-            close=ohlcv[4],
-            volume=ohlcv[5])
-        try:
-            session.add(candle)
-        except IntegrityError:
-            try:
-                session.rollback()
-            except:
-                quit()
+        candles.append(
+            Candle(
+                timestamp=int(ohlcv[0]),
+                open=ohlcv[1],
+                high=ohlcv[2],
+                low=ohlcv[3],
+                close=ohlcv[4],
+                volume=ohlcv[5]
+            )
+        )
+    try:
+        session.bulk_save_objects(candles, return_defaults=False,
+            update_changed_only=True, preserve_order=True)
+    except IntegrityError:
+        del ohlcv_batch[-1]
+        session.rollback()
+        persist_ohlcv_batch(session, ohlcv_batch, exchange, debug=False)
+    except:
+        message(message="An DB error happend", header="Error")
+        session.rollback()
+        quit()
 
-    session.commit()
     if debug:
         for candle in ohlcv_batch:
             print(exchange.iso8601(candle[0]), candle)
+
 
 def get_last_candle_timestamp(session):
     last_timestamp = session.query(Candle).order_by(desc(Candle.timestamp)).limit(1).all()
@@ -115,14 +123,14 @@ def get_candles(exchange, session, symbol, timeframe, since, doquit, debug):
             if last_candle_is_incomplete(last_candle_timestamp, timeframe, exchange):
                 # delete last incomplete candle from list
                 del ohlcv_batch[-1]
-                perist_ohlcv_batch(session, ohlcv_batch, exchange, debug)
+                persist_ohlcv_batch(session, ohlcv_batch, exchange, debug)
                 # data is up to date with current time as well
                 if doquit:
                     quit()
                 else:
-                    time.sleep(TIMEFRAMES[timeframe])
+                    time.sleep(DEFAULT_SLEEP_SECONDS)
             else:
-                perist_ohlcv_batch(session, ohlcv_batch, exchange, debug)
+                persist_ohlcv_batch(session, ohlcv_batch, exchange, debug)
 
 
 
@@ -131,6 +139,7 @@ def gen_db_name(exchange, symbol, timeframe):
     file_name = '{}_{}_{}.sqlite'.format(exchange, symbol_out, timeframe)
     full_path = os.path.join('ccxt', exchange, symbol_out, timeframe, file_name)
     return full_path
+
 
 def last_candle_is_incomplete(candle_timestamp, candle_timeframe, exchange):
     timeframe_re = re.compile(r'(?P<number>\d+)(?P<unit>[smhdwMy]{1})')
@@ -159,10 +168,12 @@ def last_candle_is_incomplete(candle_timestamp, candle_timeframe, exchange):
     else:
         message("Could not parse timeframe %s" % candle_timeframe, header="Error")
 
+
 def message(message, header="Error"):
     print(header.center(80, '-'))
     print(message)
     print('-'*80)
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description='CCXT Market Data Downloader')
@@ -211,30 +222,30 @@ def check_args(args):
            'enableRateLimit': True,
         })
     except AttributeError:
-        message('Exchange "{}" not found. Please check the exchange\
-                is supported.'.format(args.exchange), header='Error')
+        message('Exchange "{}" not found. Please check the exchange ' +
+                'is supported.'.format(args.exchange), header='Error')
         quit()
 
     if args.rate_limit:
-        params['exchange'].rateLimit = int(params['exchange'].rateLimit \
+        params['exchange'].rateLimit = int(params['exchange'].rateLimit
                                        * (1 + args.rate_limit/100))
 
     # Check if fetching of OHLC Data is supported
     if params['exchange'].has["fetchOHLCV"] == False:
-        message('{} does not support fetching OHLCV data. Please use another\
-                exchange'.format(args.exchange), header='Error')
+        message('{} does not support fetching OHLCV data. Please use ' +
+            'another exchange'.format(args.exchange), header='Error')
         quit()
 
     if params['exchange'].has['fetchOHLCV'] == 'emulated':
-        message('{} uses emulated OHLCV. This script does not support\
-                this'.format(args.exchange), header='Error')
+        message('{} uses emulated OHLCV. This script does not support' +
+                'this'.format(args.exchange), header='Error')
         quit()
 
     # Check requested timeframe is available. If not return a helpful error.
     if args.timeframe not in params['exchange'].timeframes:
-        message('The requested timeframe ({}) is not available from {}\n\
-                Available timeframes are:\n{}'.format(args.timeframe, \
-                args.exchange, ''.join(['  -' + key + '\n' for key in \
+        message('The requested timeframe ({}) is not available from {}\n' +
+                'Available timeframes are:\n{}'.format(args.timeframe,
+                args.exchange, ''.join(['  -' + key + '\n' for key in
                 params['exchange'].timeframes.keys()])), header='Error')
         quit()
     else:
@@ -243,10 +254,10 @@ def check_args(args):
     # Check if the symbol is available on the Exchange
     params['exchange'].load_markets()
     if args.symbol not in params['exchange'].symbols:
-        message('The requested symbol ({}) is not available from {}\n\
-                Available symbols are:\n{}'.format(args.symbol,args.exchange, \
-                ''.join(['  -' + key + '\n' \
-                for key in params['exchange'].symbols])), \
+        message('The requested symbol ({}) is not available from {}\n' +
+                'Available symbols are:\n{}'.format(args.symbol,args.exchange,
+                ''.join(['  -' + key + '\n' for key in
+                params['exchange'].symbols])),
                 header='Error')
         quit()
     else:
@@ -268,8 +279,8 @@ def check_args(args):
         params['since'] = get_last_candle_timestamp(params['sqlsession'])
         if params['since'] is None:
             params['since'] = params['exchange'].parse8601(DEFAULT_SINCE)
-            message('Starting with default since value of \
-                    {}.'.format(DEFAULT_SINCE), header='Info')
+            message('Starting with default since value of {}.'.format(
+                DEFAULT_SINCE), header='Info')
 
         else:
             if args.debug:
@@ -298,7 +309,7 @@ def main():
     args = parse_args()
     params = check_args(args)
     p = params
-    get_candles(p['exchange'], p['sqlsession'], p['symbol'], p['timeframe'], \
+    get_candles(p['exchange'], p['sqlsession'], p['symbol'], p['timeframe'],
                 p['since'], p['doquit'], p['debug'])
 
 
@@ -308,6 +319,6 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         message("Fetcher finished by user", header='ERROR')
     except Exception as err:
-        message("Fetcher failed with exception\n {}".format(err), \
+        message("Fetcher failed with exception\n {}".format(err),
                 header='ERROR')
         raise
