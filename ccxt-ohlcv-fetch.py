@@ -71,6 +71,7 @@ def persist_ohlcv_batch(session, ohlcv_batch, exchange, debug=False):
     except IntegrityError:
         del ohlcv_batch[-1]
         session.rollback()
+        message("ignoring already fetched data", header= "Info")
         persist_ohlcv_batch(session, ohlcv_batch, exchange, debug=False)
     except:
         message(message="An DB error happend", header="Error")
@@ -100,8 +101,12 @@ def get_ohlcv_batch(exchange, symbol, timeframe, since, session, debug=False):
         time.sleep(DEFAULT_SLEEP_SECONDS)
 
     if ohlcv_batch is not None and len(ohlcv_batch):
-        # ohlcv_batch[0] contains candle at time "since"
-        # which we already fetched in last call
+        # # sort array as eg. kraken returns values reverse
+        # ohlcv_batch_ascending = sorted(ohlcv_batch, key=lambda ohlcv: ohlcv[0],
+        #     reverse=True)
+        # # ohlcv_batch[0] contains candle at time "since"
+        # # which we already fetched in last call
+        # ohlcv_batch_ascending = ohlcv_batch_ascending[1:]
         ohlcv_batch = ohlcv_batch[1:]
         return ohlcv_batch
     else:
@@ -117,7 +122,10 @@ def get_candles(exchange, session, symbol, timeframe, since, doquit, debug):
                            since, session, debug)
 
         if ohlcv_batch is not None and len(ohlcv_batch):
-            last_candle = ohlcv_batch[-1]
+            # sort array as eg. kraken returns values reverse
+            ohlcv_batch_ascending = sorted(ohlcv_batch, key=lambda ohlcv: ohlcv[0],
+                reverse=True)
+            last_candle = ohlcv_batch_ascending[-1]
             last_candle_timestamp = since = last_candle[0]
 
             if last_candle_is_incomplete(last_candle_timestamp, timeframe, exchange):
@@ -127,8 +135,6 @@ def get_candles(exchange, session, symbol, timeframe, since, doquit, debug):
                 # data is up to date with current time as well
                 if doquit:
                     quit()
-                else:
-                    time.sleep(DEFAULT_SLEEP_SECONDS)
             else:
                 persist_ohlcv_batch(session, ohlcv_batch, exchange, debug)
 
@@ -222,8 +228,8 @@ def check_args(args):
            'enableRateLimit': True,
         })
     except AttributeError:
-        message('Exchange "{}" not found. Please check the exchange ' +
-                'is supported.'.format(args.exchange), header='Error')
+        message('Exchange "{}" not found. Please check the exchange \
+                is supported.'.format(args.exchange), header='Error')
         quit()
 
     if args.rate_limit:
@@ -232,19 +238,19 @@ def check_args(args):
 
     # Check if fetching of OHLC Data is supported
     if params['exchange'].has["fetchOHLCV"] == False:
-        message('{} does not support fetching OHLCV data. Please use ' +
-            'another exchange'.format(args.exchange), header='Error')
+        message('{} does not support fetching OHLCV data. Please use \
+            another exchange'.format(args.exchange), header='Error')
         quit()
 
     if params['exchange'].has['fetchOHLCV'] == 'emulated':
-        message('{} uses emulated OHLCV. This script does not support' +
-                'this'.format(args.exchange), header='Error')
+        message('{} uses emulated OHLCV. This script does not support \
+                this'.format(args.exchange), header='Error')
         quit()
 
     # Check requested timeframe is available. If not return a helpful error.
     if args.timeframe not in params['exchange'].timeframes:
-        message('The requested timeframe ({}) is not available from {}\n' +
-                'Available timeframes are:\n{}'.format(args.timeframe,
+        message('The requested timeframe ({}) is not available from {}\n\
+                Available timeframes are:\n{}'.format(args.timeframe,
                 args.exchange, ''.join(['  -' + key + '\n' for key in
                 params['exchange'].timeframes.keys()])), header='Error')
         quit()
