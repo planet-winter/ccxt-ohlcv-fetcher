@@ -260,10 +260,9 @@ def check_args(args):
     # Check if the symbol is available on the Exchange
     params['exchange'].load_markets()
     if args.symbol not in params['exchange'].symbols:
-        message('The requested symbol ({}) is not available from {}\n' +
-                'Available symbols are:\n{}'.format(args.symbol,args.exchange,
-                ''.join(['  -' + key + '\n' for key in
-                params['exchange'].symbols])),
+        message('The requested symbol {} is not available from {}\n'
+                'Available symbols are:\n{}'.format(args.symbol, args.exchange,
+                ''.join(['  -' + key + '\n' for key in params['exchange'].symbols])),
                 header='Error')
         quit()
     else:
