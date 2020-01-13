@@ -52,7 +52,7 @@ class Candle(Base):
 
 
 
-def persist_ohlcv_batch(session, ohlcv_batch, exchange, debug=False):
+def persist_ohlcv_batch(session, ohlcv_batch, exchange, symbol, debug=False):
     candles = []
     for ohlcv in ohlcv_batch:
         candles.append(
@@ -72,7 +72,7 @@ def persist_ohlcv_batch(session, ohlcv_batch, exchange, debug=False):
         del ohlcv_batch[-1]
         session.rollback()
         message("ignoring already fetched data", header= "Info")
-        persist_ohlcv_batch(session, ohlcv_batch, exchange, debug=False)
+        persist_ohlcv_batch(session, ohlcv_batch, exchange, symbol, debug=False)
     except:
         message(message="An DB error happend", header="Error")
         session.rollback()
@@ -80,7 +80,7 @@ def persist_ohlcv_batch(session, ohlcv_batch, exchange, debug=False):
 
     if debug:
         for candle in ohlcv_batch:
-            print(exchange.iso8601(candle[0]), candle)
+            print(exchange, symbol, exchange.iso8601(candle[0]), candle)
 
 
 def get_last_candle_timestamp(session):
@@ -101,12 +101,6 @@ def get_ohlcv_batch(exchange, symbol, timeframe, since, session, debug=False):
         time.sleep(DEFAULT_SLEEP_SECONDS)
 
     if ohlcv_batch is not None and len(ohlcv_batch):
-        # # sort array as eg. kraken returns values reverse
-        # ohlcv_batch_ascending = sorted(ohlcv_batch, key=lambda ohlcv: ohlcv[0],
-        #     reverse=True)
-        # # ohlcv_batch[0] contains candle at time "since"
-        # # which we already fetched in last call
-        # ohlcv_batch_ascending = ohlcv_batch_ascending[1:]
         ohlcv_batch = ohlcv_batch[1:]
         return ohlcv_batch
     else:
@@ -122,21 +116,18 @@ def get_candles(exchange, session, symbol, timeframe, since, doquit, debug):
                            since, session, debug)
 
         if ohlcv_batch is not None and len(ohlcv_batch):
-            # sort array as eg. kraken returns values reverse
-            ohlcv_batch_ascending = sorted(ohlcv_batch, key=lambda ohlcv: ohlcv[0],
-                reverse=True)
-            last_candle = ohlcv_batch_ascending[-1]
+            last_candle = ohlcv_batch[-1]
             last_candle_timestamp = since = last_candle[0]
 
             if last_candle_is_incomplete(last_candle_timestamp, timeframe, exchange):
                 # delete last incomplete candle from list
                 del ohlcv_batch[-1]
-                persist_ohlcv_batch(session, ohlcv_batch, exchange, debug)
+                persist_ohlcv_batch(session, ohlcv_batch, exchange, symbol, debug)
                 # data is up to date with current time as well
+                message('last candle incomplete: dropped it', header="Info")
                 if doquit:
                     quit()
-            else:
-                persist_ohlcv_batch(session, ohlcv_batch, exchange, debug)
+            persist_ohlcv_batch(session, ohlcv_batch, exchange, symbol, debug)
 
 
 
