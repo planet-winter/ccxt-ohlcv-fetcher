@@ -6,7 +6,7 @@ ccxt==1.18.1270
 certifi==2019.9.11
 cffi==1.13.1
 chardet==3.0.4
-cryptography==2.8
+cryptography==3.2
 idna==2.8
 multidict==4.5.2
 pycares==3.0.0
