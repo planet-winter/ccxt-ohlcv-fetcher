@@ -9,7 +9,7 @@ chardet==3.0.4
 cryptography==2.8
 idna==2.8
 multidict==4.5.2
-pycares==3.0.0
+pycares==4.2.0
 pycparser==2.19
 python-dateutil==2.8.1
 requests==2.22.0
